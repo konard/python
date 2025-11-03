@@ -52,12 +52,13 @@ async def health():
     return {"status": "healthy"}
 
 
-# Import and include routers (will be added later)
-# from app.api.v1 import channels, videos, analytics, alerts
-# app.include_router(channels.router, prefix="/api/v1", tags=["channels"])
-# app.include_router(videos.router, prefix="/api/v1", tags=["videos"])
-# app.include_router(analytics.router, prefix="/api/v1", tags=["analytics"])
-# app.include_router(alerts.router, prefix="/api/v1", tags=["alerts"])
+# Import and include routers
+from app.api.v1 import channels, videos, analytics, alerts
+
+app.include_router(channels.router, prefix="/api/v1", tags=["channels"])
+app.include_router(videos.router, prefix="/api/v1", tags=["videos"])
+app.include_router(analytics.router, prefix="/api/v1", tags=["analytics"])
+app.include_router(alerts.router, prefix="/api/v1", tags=["alerts"])
 
 
 if __name__ == "__main__":
