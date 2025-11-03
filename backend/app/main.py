@@ -4,7 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.core.config import settings
-from app.core.database import close_db
+from app.core.database import init_db, close_db
+from app.scheduler import start_scheduler, shutdown_scheduler
 
 
 @asynccontextmanager
@@ -12,10 +13,20 @@ async def lifespan(app: FastAPI):
     """Application lifespan events"""
     # Startup
     print(f"Starting {settings.app_name}...")
+    print("Initializing database...")
+    init_db()
+    print("Database initialized")
+
+    print("Starting background scheduler...")
+    start_scheduler()
+    print("Background scheduler started")
+
     yield
+
     # Shutdown
     print("Shutting down...")
-    await close_db()
+    shutdown_scheduler()
+    close_db()
 
 
 # Create FastAPI app
@@ -50,6 +61,14 @@ async def root():
 async def health():
     """Health check endpoint"""
     return {"status": "healthy"}
+
+
+@app.get("/quota-status")
+async def quota_status():
+    """Get YouTube API quota status across all keys"""
+    from app.services.data_ingestion.youtube_client import get_youtube_client
+    youtube_client = get_youtube_client()
+    return youtube_client.get_quota_status()
 
 
 # Import and include routers

@@ -3,22 +3,19 @@ fastapi==0.115.5
 uvicorn[standard]==0.32.1
 python-multipart==0.0.18
 
-# Database & ORM
+# Database & ORM (SQLite for MVP, PostgreSQL-ready)
 sqlmodel==0.0.22
 alembic==1.14.0
-psycopg2-binary==2.9.10
-asyncpg==0.30.0
 
-# Background Tasks
-celery==5.4.0
-redis==5.2.1
-flower==2.0.1
+# Background Tasks (APScheduler - simpler than Celery for MVP)
+apscheduler==3.10.4
 
 # YouTube API
 google-api-python-client==2.154.0
 google-auth==2.37.0
 google-auth-oauthlib==1.2.1
 google-auth-httplib2==0.2.0
+isodate==0.7.2
 
 # Data Validation & Serialization
 pydantic==2.10.3
@@ -26,7 +23,9 @@ pydantic-settings==2.6.1
 
 # HTTP Client
 httpx==0.28.1
-aiohttp==3.11.10
+
+# Caching (in-memory for MVP)
+cachetools==5.5.0
 
 # Utilities
 python-dotenv==1.0.1
@@ -37,12 +36,7 @@ pytz==2024.2
 pytest==8.3.4
 pytest-asyncio==0.24.0
 pytest-cov==6.0.0
-httpx==0.28.1
 
 # Code Quality
 ruff==0.8.4
 mypy==1.13.0
-black==24.10.0
-
-# Logging & Monitoring
-structlog==24.4.0
