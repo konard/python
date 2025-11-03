@@ -192,6 +192,6 @@ class AlertService:
 
     async def get_active_alert_rules(self) -> List[AlertRule]:
         """Get all active alert rules"""
-        stmt = select(AlertRule).where(AlertRule.is_active == True)
+        stmt = select(AlertRule).where(AlertRule.is_active.is_(True))
         result = await self.db.execute(stmt)
         return list(result.scalars().all())

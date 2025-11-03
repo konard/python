@@ -1,14 +1,12 @@
 """YouTube Data API v3 client with rate limiting and caching"""
-import re
+import asyncio
+import json
+
 import isodate
 import redis.asyncio as redis
-from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
-import json
-import asyncio
-
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
 from app.services.data_ingestion.api_key_manager import get_api_key_manager
@@ -268,10 +266,10 @@ class YouTubeAPIClient:
                 all_videos.extend(cached)
                 continue
 
-            def request_builder(youtube_service):
+            def request_builder(youtube_service, video_ids=batch_str):
                 return youtube_service.videos().list(
                     part="snippet,contentDetails,statistics,status",
-                    id=batch_str
+                    id=video_ids
                 )
 
             response = await self._execute_with_key_rotation(request_builder, quota_cost=1)
