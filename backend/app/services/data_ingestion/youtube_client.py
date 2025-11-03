@@ -11,22 +11,22 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from app.core.config import settings
+from app.services.data_ingestion.api_key_manager import get_api_key_manager
 
 
 class YouTubeAPIClient:
     """
     YouTube Data API v3 client with:
-    - Rate limiting to respect quota
+    - Multiple API key support with automatic rotation
+    - Rate limiting to respect quota per key
     - Redis caching to minimize API calls
     - Batch requests for efficiency
     """
 
     def __init__(self):
-        self.api_key = settings.youtube_api_key
-        self.youtube = build("youtube", "v3", developerKey=self.api_key)
+        self.api_key_manager = get_api_key_manager()
         self.redis_client: Optional[redis.Redis] = None
-        self._quota_used = 0
-        self._quota_limit = settings.youtube_api_quota_limit
+        self._youtube_services: Dict[str, Any] = {}  # Cache youtube service per key
 
     async def _get_redis(self) -> redis.Redis:
         """Get or create Redis connection"""
@@ -59,11 +59,58 @@ class YouTubeAPIClient:
             # Log but don't fail on cache errors
             print(f"Cache set error: {e}")
 
-    def _track_quota(self, units: int) -> None:
-        """Track API quota usage"""
-        self._quota_used += units
-        if self._quota_used > self._quota_limit:
-            print(f"Warning: Quota limit reached ({self._quota_used}/{self._quota_limit})")
+    def _get_youtube_service(self, api_key: str) -> Any:
+        """Get or create YouTube service for a specific API key"""
+        if api_key not in self._youtube_services:
+            self._youtube_services[api_key] = build("youtube", "v3", developerKey=api_key)
+        return self._youtube_services[api_key]
+
+    async def _execute_with_key_rotation(self, request_builder, quota_cost: int = 1) -> Optional[Dict[str, Any]]:
+        """
+        Execute a YouTube API request with automatic key rotation on failure.
+
+        Args:
+            request_builder: Function that takes api_key and returns a YouTube API request
+            quota_cost: Quota units consumed by this request
+
+        Returns:
+            API response dict or None on failure
+        """
+        # Try up to 3 times with different keys
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Get an available API key
+                api_key = await self.api_key_manager.get_key_for_request()
+
+                # Build and execute request
+                youtube_service = self._get_youtube_service(api_key)
+                request = request_builder(youtube_service)
+                response = await asyncio.to_thread(request.execute)
+
+                # Track successful request
+                await self.api_key_manager.track_request(api_key, quota_cost)
+
+                return response
+
+            except HttpError as e:
+                # Handle error and mark key if needed
+                error_msg = str(e)
+                if attempt < max_retries - 1:
+                    # Try to get another key
+                    await self.api_key_manager.handle_error(api_key, e)
+                    print(f"YouTube API error (attempt {attempt + 1}/{max_retries}): {error_msg}. Trying another key...")
+                    continue
+                else:
+                    # Last attempt failed
+                    await self.api_key_manager.handle_error(api_key, e)
+                    print(f"YouTube API error (all attempts failed): {error_msg}")
+                    return None
+            except Exception as e:
+                print(f"Unexpected error in YouTube API call: {e}")
+                return None
+
+        return None
 
     async def get_channel_by_id(self, channel_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -82,24 +129,20 @@ class YouTubeAPIClient:
         if cached:
             return cached
 
-        try:
-            request = self.youtube.channels().list(
+        def request_builder(youtube_service):
+            return youtube_service.channels().list(
                 part="snippet,statistics,contentDetails",
                 id=channel_id
             )
-            response = await asyncio.to_thread(request.execute)
-            self._track_quota(1)
 
-            if not response.get("items"):
-                return None
+        response = await self._execute_with_key_rotation(request_builder, quota_cost=1)
 
-            channel_data = response["items"][0]
-            await self._cache_set(cache_key, channel_data, settings.cache_ttl_channel)
-            return channel_data
-
-        except HttpError as e:
-            print(f"YouTube API error: {e}")
+        if not response or not response.get("items"):
             return None
+
+        channel_data = response["items"][0]
+        await self._cache_set(cache_key, channel_data, settings.cache_ttl_channel)
+        return channel_data
 
     async def get_channel_by_username(self, username: str) -> Optional[Dict[str, Any]]:
         """
@@ -111,45 +154,42 @@ class YouTubeAPIClient:
         Returns:
             Channel data dict or None if not found
 
-        Quota cost: 1 unit
+        Quota cost: 1-2 units
         """
         cache_key = f"youtube:channel:username:{username}"
         cached = await self._cache_get(cache_key)
         if cached:
             return cached
 
-        try:
-            # Try forUsername first
-            request = self.youtube.channels().list(
+        # Try forUsername first
+        def request_builder_username(youtube_service):
+            return youtube_service.channels().list(
                 part="snippet,statistics,contentDetails",
                 forUsername=username
             )
-            response = await asyncio.to_thread(request.execute)
-            self._track_quota(1)
 
-            if response.get("items"):
-                channel_data = response["items"][0]
-                await self._cache_set(cache_key, channel_data, settings.cache_ttl_channel)
-                return channel_data
+        response = await self._execute_with_key_rotation(request_builder_username, quota_cost=1)
 
-            # If not found, try forHandle (for @handle format)
-            request = self.youtube.channels().list(
+        if response and response.get("items"):
+            channel_data = response["items"][0]
+            await self._cache_set(cache_key, channel_data, settings.cache_ttl_channel)
+            return channel_data
+
+        # If not found, try forHandle (for @handle format)
+        def request_builder_handle(youtube_service):
+            return youtube_service.channels().list(
                 part="snippet,statistics,contentDetails",
                 forHandle=username
             )
-            response = await asyncio.to_thread(request.execute)
-            self._track_quota(1)
 
-            if response.get("items"):
-                channel_data = response["items"][0]
-                await self._cache_set(cache_key, channel_data, settings.cache_ttl_channel)
-                return channel_data
+        response = await self._execute_with_key_rotation(request_builder_handle, quota_cost=1)
 
-            return None
+        if response and response.get("items"):
+            channel_data = response["items"][0]
+            await self._cache_set(cache_key, channel_data, settings.cache_ttl_channel)
+            return channel_data
 
-        except HttpError as e:
-            print(f"YouTube API error: {e}")
-            return None
+        return None
 
     async def get_channel_videos(
         self,
@@ -177,29 +217,28 @@ class YouTubeAPIClient:
 
         uploads_playlist_id = channel_data["contentDetails"]["relatedPlaylists"]["uploads"]
 
-        try:
-            request = self.youtube.playlistItems().list(
+        def request_builder(youtube_service):
+            return youtube_service.playlistItems().list(
                 part="contentDetails",
                 playlistId=uploads_playlist_id,
                 maxResults=min(max_results, 50),
                 pageToken=page_token
             )
-            response = await asyncio.to_thread(request.execute)
-            self._track_quota(1)
 
-            video_ids = [
-                item["contentDetails"]["videoId"]
-                for item in response.get("items", [])
-            ]
+        response = await self._execute_with_key_rotation(request_builder, quota_cost=1)
 
-            return {
-                "items": video_ids,
-                "nextPageToken": response.get("nextPageToken")
-            }
-
-        except HttpError as e:
-            print(f"YouTube API error: {e}")
+        if not response:
             return {"items": [], "nextPageToken": None}
+
+        video_ids = [
+            item["contentDetails"]["videoId"]
+            for item in response.get("items", [])
+        ]
+
+        return {
+            "items": video_ids,
+            "nextPageToken": response.get("nextPageToken")
+        }
 
     async def get_videos_details(self, video_ids: List[str]) -> List[Dict[str, Any]]:
         """
@@ -229,21 +268,18 @@ class YouTubeAPIClient:
                 all_videos.extend(cached)
                 continue
 
-            try:
-                request = self.youtube.videos().list(
+            def request_builder(youtube_service):
+                return youtube_service.videos().list(
                     part="snippet,contentDetails,statistics,status",
                     id=batch_str
                 )
-                response = await asyncio.to_thread(request.execute)
-                self._track_quota(1)
 
+            response = await self._execute_with_key_rotation(request_builder, quota_cost=1)
+
+            if response:
                 videos = response.get("items", [])
                 all_videos.extend(videos)
-
                 await self._cache_set(cache_key, videos, settings.cache_ttl_video)
-
-            except HttpError as e:
-                print(f"YouTube API error: {e}")
 
         return all_videos
 
@@ -268,8 +304,8 @@ class YouTubeAPIClient:
 
         Quota cost: 1 unit per request
         """
-        try:
-            request = self.youtube.commentThreads().list(
+        def request_builder(youtube_service):
+            return youtube_service.commentThreads().list(
                 part="snippet",
                 videoId=video_id,
                 maxResults=min(max_results, 100),
@@ -277,18 +313,17 @@ class YouTubeAPIClient:
                 pageToken=page_token,
                 textFormat="plainText"
             )
-            response = await asyncio.to_thread(request.execute)
-            self._track_quota(1)
 
-            return {
-                "items": response.get("items", []),
-                "nextPageToken": response.get("nextPageToken")
-            }
+        response = await self._execute_with_key_rotation(request_builder, quota_cost=1)
 
-        except HttpError as e:
-            # Comments might be disabled
-            print(f"YouTube API error getting comments: {e}")
+        if not response:
+            # Comments might be disabled or error occurred
             return {"items": [], "nextPageToken": None}
+
+        return {
+            "items": response.get("items", []),
+            "nextPageToken": response.get("nextPageToken")
+        }
 
     @staticmethod
     def parse_duration(duration_str: str) -> int:

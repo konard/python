@@ -5,11 +5,12 @@ A comprehensive YouTube channel analytics platform for tracking channel performa
 ## Features
 
 - **Multi-Channel Tracking**: Monitor your own channels and competitors (public data only)
+- **Multi-API Key Support**: Automatic rotation between multiple YouTube API keys with quota monitoring
 - **Time-Series Analytics**: Daily snapshots of channel and video statistics
 - **Trend Detection**: Identify trending videos and growth patterns
 - **Alert System**: Configurable alerts for significant events (view spikes, engagement drops)
 - **Modern Dashboard**: React-based UI with interactive charts and reports
-- **Efficient Data Storage**: PostgreSQL with partitioning for time-series data
+- **Flexible Database**: Supports both SQLite (for easy MVP setup) and PostgreSQL (for production)
 - **Background Processing**: Celery-based task queue for periodic updates
 - **API-First Design**: RESTful API with FastAPI
 
@@ -25,10 +26,13 @@ A comprehensive YouTube channel analytics platform for tracking channel performa
 - **Alembic** - Database migrations
 
 ### Frontend
-- **Next.js 14+** - React framework with SSR
+- **React 18+** - UI library
+- **Vite** - Fast build tool and dev server
 - **TypeScript** - Type-safe JavaScript
-- **Tailwind CSS + Shadcn/ui** - Modern UI components
+- **Tailwind CSS** - Utility-first CSS framework
 - **Recharts** - Data visualization
+- **React Router** - Client-side routing
+- **Axios** - HTTP client
 
 ## Project Structure
 
@@ -140,15 +144,23 @@ cd backend
 celery -A app.tasks.celery_app beat --loglevel=info
 ```
 
-### 6. Frontend Setup (Coming Soon)
+### 6. Frontend Setup
 
 ```bash
 cd frontend
+
+# Install dependencies
 npm install
+
+# Start development server (runs on http://localhost:3000)
 npm run dev
 ```
 
-### Using Docker (Recommended)
+Frontend will be available at: http://localhost:3000
+
+### Using Docker (Recommended for Production)
+
+**Note:** For MVP/local development, it's easier to run backend and frontend separately (see steps 5-6).
 
 ```bash
 # Start all services
@@ -160,6 +172,23 @@ docker-compose logs -f
 # Stop services
 docker-compose down
 ```
+
+### Quick Start (Simplified MVP Setup)
+
+For the easiest setup experience, use SQLite instead of PostgreSQL:
+
+1. Copy `.env.example` to `.env`
+2. Edit `.env` and set:
+   ```env
+   DATABASE_URL=sqlite:///./youtube_analytics.db
+   REDIS_URL=redis://localhost:6379/0
+   YOUTUBE_API_KEYS=your-api-key-here
+   SECRET_KEY=any-random-string-here
+   ```
+3. Install and start Redis (or skip Celery tasks for now)
+4. Run backend: `cd backend && pip install -r requirements.txt && uvicorn app.main:app --reload`
+5. Run frontend: `cd frontend && npm install && npm run dev`
+6. Open http://localhost:3000 in your browser
 
 ## Usage
 

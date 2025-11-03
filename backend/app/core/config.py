@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     celery_result_backend: Optional[str] = Field(default=None, alias="CELERY_RESULT_BACKEND")
 
     # YouTube API
-    youtube_api_key: str = Field(..., alias="YOUTUBE_API_KEY")
+    youtube_api_keys: str = Field(..., alias="YOUTUBE_API_KEYS")  # Comma-separated list of API keys
     youtube_api_quota_limit: int = Field(default=10000, alias="YOUTUBE_API_QUOTA_LIMIT")
 
     # Cache TTL (seconds)
